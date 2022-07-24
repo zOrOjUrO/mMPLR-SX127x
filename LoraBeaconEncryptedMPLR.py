@@ -103,9 +103,8 @@ class LoRaBeacon(LoRa):
                 self.terminate()
 
             elif header.get("Flag") == "1":
-                #implement send data packets with encrypted data
-                self.mplr.setFlag("DATA")
-                pass
+                self.sendData()
+                self.terminate()
             
             elif header.get("Flag") == "2":
                 self.mplr.setBatchSize(header.get("BatchSize"), 1)
@@ -118,13 +117,14 @@ class LoRaBeacon(LoRa):
                 self.terminate("ACK")
                 
             elif header.get("Flag") == "5":
-                print("Request Acknowledged.")
+                print("Terminate Request Acknowledged.")
                 #To-Do:implement ACK wait
         else:
             print("Packet Header Corrupted.")
         self.set_mode(MODE.SLEEP)
         self.reset_ptr_rx()
         self.set_mode(MODE.RXCONT)
+        sleep(1)
 
     def handshake(self, batchSize, destId, service, flag):
         self.mplr.setDestinationID(destId)
@@ -137,7 +137,7 @@ class LoRaBeacon(LoRa):
         self.set_mode(MODE.TX)
         sleep(1)
         if self.mplr.Flag == "SYN":
-            #wait for ACK
+            #wait for SYN-ACK
             pass
 
     def terminate(self, flag):
@@ -151,9 +151,9 @@ class LoRaBeacon(LoRa):
             #wait for ACK
             pass
 
-    def sendData(self, encryptedData):
+    def sendData(self):
         self.mplr.Flag = '2'
-        packets = self.mplr.getPackets(data=encryptedData, datatype=self.mplr.ServiceType, destinationId=self.mplr.DestinationID)
+        packets = self.mplr.getPackets(data=self.message, datatype=self.mplr.ServiceType, destinationId=self.mplr.DestinationID)
         for packet in packets:
             self.write_payload(packet)
             BOARD.led_on()
@@ -168,11 +168,10 @@ class LoRaBeacon(LoRa):
         service = services.get(datatype)
         batchSize = len(encryptedData)//self.mplr.maxPayloadSize + (1 if len(encryptedData)%self.mplr.maxPayloadSize else 0)
         #handshake initiated
+        self.message = encryptedData
         self.handshake(batchSize, destId=destinationId, service=service, flag="SYN")
         #connection established
-        self.sendData(encryptedData)
-        #terminate connection
-        self.terminate("FIN")
+        
 
 
     def on_tx_done(self):
