@@ -36,7 +36,6 @@ from mMPLR import *
 import base64
 
 
-
 class LoRaBeacon(LoRa):
 
     def __init__(self, verbose=False):
@@ -48,18 +47,11 @@ class LoRaBeacon(LoRa):
         self.mplr = mMPLR()
         self.mplr.setDeviceID('1')
         self.mplr.setDestinationID('2')
+        self.mplr.setFlag('0')
 
-    def sendPacket(self, flag):
-        self.mplr.setFlag(flag)
-        self.write_payload(self.mplr.genPacket())
-        BOARD.led_on()
-        self.set_mode(MODE.TX)
-        sleep(1)
-
-
-    def receiveNPackets(self, batchSize):
+    def receiveBatch(self,):
         packets = []
-        for _ in range(batchSize):
+        for _ in range(self.mplr.BatchSize):
             recvdData = self.read_payload(nocheck=True)
             packets.append(self.mplr.parsePacket(recvdData))
             self.set_mode(MODE.SLEEP)
@@ -68,25 +60,31 @@ class LoRaBeacon(LoRa):
             sleep(1)
         self.AckBatch(packets)
 
+    def sendBVACK(self):
+        self.mplr.setFlag("BVACK")
+        self.mplr.setPayload("")
+        self.write_payload(self.mplr.genPacket())
+        BOARD.led_on()
+        self.set_mode(MODE.TX)
+        sleep(1)
+
     def AckBatch(self, packets):
         encryptedMessage, BatchAck = self.mplr.parsePackets(packets)
         if not len(BatchAck):
             message = decrypt(encryptedMessage, self.Password)
             service = packets[0].get("Header").get("Service")
             if service == 0:
-                print(message)
+                return message
             elif service == 1:
-                print("Image:",base64.b64decode(message))
+                return ("Image:"+base64.b64decode(message))
             elif service == 2:
-                print("Audio:",base64.b64decode(message))
+                return ("Audio:"+base64.b64decode(message))
         else:
             payload = encrypt(str(BatchAck[0]), self.Password)
             self.mplr.setPayload(payload=payload)
-        self.sendPacket("BVACK")
+        self.sendBVACK()
         sleep(1)
         
-
-
     def on_rx_done(self):
         print("\nRxDone")
         print(self.get_irq_flags())
@@ -97,94 +95,85 @@ class LoRaBeacon(LoRa):
             header = recvdPacket.get("Header", {})
             #message = recvdPacket.get("Content", "")
             if header.get("Flag") == "0":
-                self.mplr.setDestinationID(header.get("DestinationUID", self.mplr.DeviceID))
-                self.mplr.setServiceType(header.get("Service"))
-                self.mplr.setBatchSize(header.get("BatchSize"), 1)
-                self.sendPacket("SYN-ACK")
+                self.handshake(batchSize=header.get("BatchSize", 1), 
+                                destId=header.get("DestinationUID", self.mplr.DeviceID),
+                                service=header.get("Service"),
+                                flag="ACK")
+                print(self.receiveBatch())
+                self.terminate()
 
             elif header.get("Flag") == "1":
-                self.mplr.setDestinationID(header.get("DestinationUID", self.mplr.DeviceID))
-                self.mplr.setServiceType(header.get("Service"))
-                self.mplr.setBatchSize(header.get("BatchSize"), 1)
-                self.sendPacket("DATA")
-
-            elif header.get("Flag") == "2":
+                #implement send data packets with encrypted data
                 self.mplr.setFlag("DATA")
+                pass
+            
+            elif header.get("Flag") == "2":
                 self.mplr.setBatchSize(header.get("BatchSize"), 1)
-                self.receiveNPackets(self.mplr.BatchSize)
+                print(self.receiveBatch())
             
             elif header.get("Flag") == "3":
-                self.sendPacket("FIN")
-                print("Batch was corrupted.")
+                if int(header.get("PayloadSize")): print("Batch was corrupted.")
             
             elif header.get("Flag") == "4":
-                self.sendPacket("ACK")
-                print("Connection Terminated.")
-                self.mplr.setFlag("SYN")
-            
+                self.terminate("ACK")
+                
             elif header.get("Flag") == "5":
                 print("Request Acknowledged.")
                 #To-Do:implement ACK wait
         else:
             print("Packet Header Corrupted.")
-
-
-
         self.set_mode(MODE.SLEEP)
         self.reset_ptr_rx()
         self.set_mode(MODE.RXCONT)
-        
-    def encryptAndSendMPLRData(self, data, datatype = 'Text'):
-        encryptedData = encrypt(data, self.Password)
 
-        if self.mplr.Flag == "0":
-            self.mplr.setDestinationID(header.get("DestinationUID", self.mplr.DeviceID))
-            self.mplr.setServiceType(header.get("Service"))
-            self.mplr.setBatchSize(header.get("BatchSize"), 1)
-            self.sendPacket("SYN-ACK")
+    def handshake(self, batchSize, destId, service, flag):
+        self.mplr.setDestinationID(destId)
+        self.mplr.setBatchSize(batchSize=batchSize)
+        self.mplr.setServiceType(service=service)
+        self.mplr.setFlag(flag=flag)
+        self.mplr.setPayload("")
+        self.write_payload(self.mplr.genPacket())
+        BOARD.led_on()
+        self.set_mode(MODE.TX)
+        sleep(1)
+        if self.mplr.Flag == "SYN":
+            #wait for ACK
+            pass
 
-        elif self.mplr.Flag == "1":
-            self.mplr.setDestinationID(header.get("DestinationUID", self.mplr.DeviceID))
-            self.mplr.setServiceType(header.get("Service"))
-            self.mplr.setBatchSize(header.get("BatchSize"), 1)
-            self.sendPacket("DATA")
+    def terminate(self, flag):
+        self.mplr.setFlag(flag)
+        self.mplr.setPayload("")
+        self.write_payload(self.mplr.genPacket())
+        BOARD.led_on()
+        self.set_mode(MODE.TX)
+        sleep(1)
+        if self.mplr.Flag == "FIN": 
+            #wait for ACK
+            pass
 
-        elif self.mplr.Flag == "2":
-            self.mplr.setFlag("DATA")
-            self.mplr.setBatchSize(header.get("BatchSize"), 1)
-            self.receiveNPackets(self.mplr.BatchSize)
-        
-        elif self.mplr.Flag == "3":
-            self.sendPacket("BVACK")
-            print("Batch was corrupted.")
-        
-        elif self.mplr.Flag == "4":
-            self.sendPacket("FIN")
-            #implement wait for ACK
-            print("Connection Terminated.")
-            self.mplr.setFlag("SYN")
-        
-        elif self.mplr.Flag == "5":
-            print("Request Acknowledge Sent.")
-            #To-Do:implement ACK wait
-
-        if self.mplr.Flag != "DATA":
-            self.mplr.setDestinationID(self.mplr.DestinationID)
-            self.mplr.setServiceType(datatype)
-            self.mplr.setFlag("SYN")
-            batchSize = data//self.mplr.maxPayloadSize + (1 if data%self.mplr.maxPayloadSize else 0)
-            self.mplr.setBatchSize(batchSize=batchSize)
-            self.write_payload(self.mplr.genPacket())
+    def sendData(self, encryptedData):
+        self.mplr.Flag = '2'
+        packets = self.mplr.getPackets(data=encryptedData, datatype=self.mplr.ServiceType, destinationId=self.mplr.DestinationID)
+        for packet in packets:
+            self.write_payload(packet)
             BOARD.led_on()
             self.set_mode(MODE.TX)
-        else:
-            packets = self.mplr.getPackets(encryptedData, datatype=datatype, destinationId=self.DestinationID)
-            for packet in packets:
-                self.write_payload(packet)
-                BOARD.led_on()
-                self.set_mode(MODE.TX)
-                sleep(1)
+            sleep(1)
         sleep(1)
+        
+        
+    def encryptAndSendMPLRData(self, data, datatype = 'Text', destinationId = '2'):
+        encryptedData = encrypt(data, self.Password)
+        services = {'Text': 0, 'Image': 1, 'Audio': 2}
+        service = services.get(datatype)
+        batchSize = len(encryptedData)//self.mplr.maxPayloadSize + (1 if len(encryptedData)%self.mplr.maxPayloadSize else 0)
+        #handshake initiated
+        self.handshake(batchSize, destId=destinationId, service=service, flag="SYN")
+        #connection established
+        self.sendData(encryptedData)
+        #terminate connection
+        self.terminate("FIN")
+
 
     def on_tx_done(self):
         global args
@@ -245,7 +234,6 @@ def getArgParser():
 if __name__=="__main__":
     BOARD.setup()
 
-
     lora = LoRaBeacon(verbose=False)
     args = getArgParser().parse_args(lora)
 
@@ -260,7 +248,6 @@ if __name__=="__main__":
     #lora.set_pa_config(max_power=0x04, output_power=0b01000000)
     #lora.set_low_data_rate_optim(True)
     #lora.set_pa_ramp(PA_RAMP.RAMP_50_us)
-
 
     print(lora)
     #assert(lora.get_lna()['lna_gain'] == GAIN.NOT_USED)
