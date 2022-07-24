@@ -52,7 +52,8 @@ class LoRaBeacon(LoRa):
     def receiveBatch(self,):
         packets = []
         for _ in range(self.mplr.BatchSize):
-            recvdData = self.read_payload(nocheck=True)
+            recvdData = map(hex, self.read_payload(nocheck=True)) #receving hex payload
+            print("RECV: ", recvdData)
             packets.append(self.mplr.parsePacket(recvdData))
             self.set_mode(MODE.SLEEP)
             self.reset_ptr_rx()
@@ -62,8 +63,9 @@ class LoRaBeacon(LoRa):
 
     def sendBVACK(self):
         self.mplr.setFlag("BVACK")
-        self.mplr.setPayload("")
-        self.write_payload(self.mplr.genPacket())
+        packet = self.mplr.genPacket(100, "") 
+        packet = [int(hex(b), 0) for b in packet] #sending hex payload
+        self.write_payload(packet)
         BOARD.led_on()
         self.set_mode(MODE.TX)
         sleep(1)
@@ -88,7 +90,7 @@ class LoRaBeacon(LoRa):
     def on_rx_done(self):
         print("\nRxDone")
         print(self.get_irq_flags())
-        recvdData = self.read_payload(nocheck=True)
+        recvdData = map(hex, self.read_payload(nocheck=True)) #receving hex payload
         recvdPacket = self.mplr.parsePacket(recvdData)
 
         if not recvdPacket.get("isCorrupt", False):
@@ -131,8 +133,9 @@ class LoRaBeacon(LoRa):
         self.mplr.setBatchSize(batchSize=batchSize)
         self.mplr.setServiceType(service=service)
         self.mplr.setFlag(flag=flag)
-        self.mplr.setPayload("")
-        self.write_payload(self.mplr.genPacket())
+        packet = self.mplr.genPacket(1, "")
+        packet = [int(hex(b), 0) for b in packet]
+        self.write_payload(packet)
         BOARD.led_on()
         self.set_mode(MODE.TX)
         sleep(1)
@@ -142,8 +145,9 @@ class LoRaBeacon(LoRa):
 
     def terminate(self, flag):
         self.mplr.setFlag(flag)
-        self.mplr.setPayload("")
-        self.write_payload(self.mplr.genPacket())
+        packet = self.mplr.genPacket(-1, "")
+        packet = [int(hex(b), 0) for b in packet]
+        self.write_payload(packet)
         BOARD.led_on()
         self.set_mode(MODE.TX)
         sleep(1)
@@ -155,12 +159,12 @@ class LoRaBeacon(LoRa):
         self.mplr.Flag = '2'
         packets = self.mplr.getPackets(data=self.message, datatype=self.mplr.ServiceType, destinationId=self.mplr.DestinationID)
         for packet in packets:
+            packet = [int(hex(b), 0) for b in packet]
             self.write_payload(packet)
             BOARD.led_on()
             self.set_mode(MODE.TX)
             sleep(1)
         sleep(1)
-        
         
     def encryptAndSendMPLRData(self, data, datatype = 'Text', destinationId = '2'):
         encryptedData = encrypt(data, self.Password)
@@ -171,8 +175,6 @@ class LoRaBeacon(LoRa):
         self.message = encryptedData
         self.handshake(batchSize, destId=destinationId, service=service, flag="SYN")
         #connection established
-        
-
 
     def on_tx_done(self):
         global args
